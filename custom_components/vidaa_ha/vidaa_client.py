@@ -142,6 +142,8 @@ class VidaaClient:
         self._mqtt: aiomqtt.Client | None = None
         self._stopping = False
         self._first_ready = asyncio.Event()
+        self._connected_event = asyncio.Event()
+        self._reconnect_event = asyncio.Event()
         self._notify_handle: asyncio.TimerHandle | None = None
         self._volume_target: int | None = None
         self._volume_target_until = 0.0
@@ -180,6 +182,8 @@ class VidaaClient:
 
         self._stopping = False
         self._first_ready.clear()
+        self._connected_event.clear()
+        self._reconnect_event.clear()
         self._task = asyncio.create_task(
             self._run(), name=f"vidaa-ha {self.host}"
         )
@@ -204,6 +208,8 @@ class VidaaClient:
         if self._notify_handle is not None:
             self._notify_handle.cancel()
             self._notify_handle = None
+        self._connected_event.clear()
+        self._reconnect_event.set()
         await self._cancel_volume_tasks()
         self._volume_target = None
         self._volume_target_until = 0.0
@@ -252,6 +258,7 @@ class VidaaClient:
                     attempt = 0
                     self.data["connected"] = True
                     self.data["last_connected"] = time.time()
+                    self._connected_event.set()
                     await mqtt.subscribe(f"/remoteapp/mobile/{self.client_id}/#")
                     await mqtt.subscribe("/remoteapp/mobile/broadcast/#")
                     self._notify()
@@ -285,6 +292,7 @@ class VidaaClient:
                         await self._listen_task
                     self._listen_task = None
                 self._mqtt = None
+                self._connected_event.clear()
                 self.data["connected"] = False
                 self._notify()
 
@@ -298,7 +306,13 @@ class VidaaClient:
                 delay,
                 attempt,
             )
-            await asyncio.sleep(delay)
+            try:
+                # A command can wake this up instead of waiting the full
+                # backoff while the user is pressing a button.
+                await asyncio.wait_for(self._reconnect_event.wait(), delay)
+            except TimeoutError:
+                pass
+            self._reconnect_event.clear()
 
     async def _listen(self, mqtt: aiomqtt.Client) -> None:
         async for message in mqtt.messages:
@@ -475,10 +489,47 @@ class VidaaClient:
     def _action_topic(self, service: str, action: str) -> str:
         return f"/remoteapp/tv/{service}/{self.client_id}/actions/{action}"
 
-    async def _publish(self, topic: str, payload: str) -> None:
-        if self._mqtt is None or not self.connected:
+    async def _wait_for_connection(self, timeout: float = 10.0) -> None:
+        """Wake the reconnect loop and wait briefly for a usable session."""
+        if self._task is None or self._task.done():
+            raise VidaaCommandError(
+                "The TV connection is stopped; reload the integration."
+            )
+        self._reconnect_event.set()
+        try:
+            await asyncio.wait_for(self._connected_event.wait(), timeout=timeout)
+        except TimeoutError as err:
+            raise VidaaCommandError(
+                "The TV is not connected and reconnecting timed out."
+            ) from err
+        if self._mqtt is None:
             raise VidaaCommandError("The TV is not connected")
-        await self._mqtt.publish(topic, payload, qos=0)
+
+    async def _publish(self, topic: str, payload: str) -> None:
+        """Publish a command, reconnecting first if the session dropped."""
+        for attempt in range(2):
+            if self._mqtt is None or not self.connected:
+                await self._wait_for_connection()
+            mqtt = self._mqtt
+            if mqtt is None:
+                continue
+            try:
+                await mqtt.publish(topic, payload, qos=0)
+                return
+            except aiomqtt.MqttError as err:
+                self._connected_event.clear()
+                self.data["connected"] = False
+                self._notify()
+                _LOGGER.warning(
+                    "VIDAA connection lost while sending a command: %s", err
+                )
+                if attempt == 0:
+                    await self._wait_for_connection()
+                else:
+                    raise VidaaCommandError(
+                        "The TV is not connected. Reconnect failed."
+                    ) from err
+        raise VidaaCommandError("The TV is not connected")
 
     async def _async_query(
         self,
