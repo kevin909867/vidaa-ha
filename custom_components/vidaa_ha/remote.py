@@ -51,7 +51,9 @@ class VidaaRemote(VidaaEntity, RemoteEntity):
 
     @property
     def available(self) -> bool:
-        return self._client.connected
+        # Call the client even if MQTT dropped so Home Assistant surfaces a
+        # useful "not connected" error instead of silently skipping the call.
+        return True
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -84,12 +86,16 @@ class VidaaRemote(VidaaEntity, RemoteEntity):
         repeats = int(kwargs.get("num_repeats", 1) or 1)
         hold = float(kwargs.get("hold_secs", 0) or 0)
         delay = float(
-            kwargs.get(
-                "delay_secs",
-                self._entry.options.get(CONF_KEY_DELAY, DEFAULT_KEY_DELAY),
-            )
+            kwargs.get("delay_secs")
+            or self._entry.options.get(CONF_KEY_DELAY, DEFAULT_KEY_DELAY)
+            or 0
         )
-        commands = list(command)
+        # Home Assistant normally supplies a list, but direct calls and older
+        # releases can pass a single string. Without this, list("home") would
+        # send h, o, m, e instead of KEY_HOME.
+        commands = [command] if isinstance(command, str) else list(command)
+        if not commands:
+            return
         try:
             for _ in range(max(1, repeats)):
                 for single in commands:

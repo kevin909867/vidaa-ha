@@ -13,9 +13,11 @@ import re
 import socket
 import ssl
 import time
+import urllib.request
 from collections.abc import Callable, Iterable
 from contextlib import suppress
 from typing import Any
+from xml.etree import ElementTree
 
 import aiomqtt
 
@@ -27,6 +29,13 @@ except ImportError:  # pragma: no cover - standalone probe path
     from const import clean_app_name, resolve_key
 
 _LOGGER = logging.getLogger(__name__)
+
+_UPNP_RENDERING_CONTROL_URL = (
+    "http://{host}:38400/upnp/control/mingusrcr"
+)
+_UPNP_RENDERING_CONTROL_SERVICE = (
+    "urn:schemas-upnp-org:service:RenderingControl:1"
+)
 
 
 class VidaaError(Exception):
@@ -128,10 +137,14 @@ class VidaaClient:
         self._pending: dict[str, list[asyncio.Future[Any]]] = {}
         self._task: asyncio.Task[None] | None = None
         self._listen_task: asyncio.Task[None] | None = None
+        self._volume_poll_task: asyncio.Task[None] | None = None
+        self._volume_refresh_task: asyncio.Task[None] | None = None
         self._mqtt: aiomqtt.Client | None = None
         self._stopping = False
         self._first_ready = asyncio.Event()
         self._notify_handle: asyncio.TimerHandle | None = None
+        self._volume_target: int | None = None
+        self._volume_target_until = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -191,6 +204,9 @@ class VidaaClient:
         if self._notify_handle is not None:
             self._notify_handle.cancel()
             self._notify_handle = None
+        await self._cancel_volume_tasks()
+        self._volume_target = None
+        self._volume_target_until = 0.0
         if self._listen_task is not None:
             self._listen_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -245,6 +261,10 @@ class VidaaClient:
                     )
                     await self._initial_load()
                     self._first_ready.set()
+                    self._volume_poll_task = asyncio.create_task(
+                        self._poll_volume(),
+                        name=f"vidaa-ha volume poll {self.host}",
+                    )
                     self._notify()
                     await self._listen_task
             except asyncio.CancelledError:
@@ -258,6 +278,7 @@ class VidaaClient:
                     "Unexpected error in VIDAA connection to %s", self.host
                 )
             finally:
+                await self._cancel_volume_tasks()
                 if self._listen_task is not None:
                     self._listen_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -307,13 +328,146 @@ class VidaaClient:
                 json.dumps({"action": "get_menu_info"}),
             ),
         ]
+        # This firmware does not answer getvolume and often sends no volume
+        # broadcasts while an app is open. UPnP RenderingControl still works,
+        # so read it alongside the MQTT queries instead of delaying startup.
         await asyncio.gather(
             *[
                 self._async_query(service, action, payload, timeout=7.0)
                 for service, action, payload in queries
             ],
+            self.async_refresh_volume(),
             return_exceptions=True,
         )
+
+    async def _cancel_volume_tasks(self) -> None:
+        """Cancel volume polling and delayed refresh tasks."""
+        for name in ("_volume_refresh_task", "_volume_poll_task"):
+            task = getattr(self, name)
+            if task is None:
+                continue
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            setattr(self, name, None)
+
+    async def _poll_volume(self) -> None:
+        """Keep volume state fresh when the TV does not broadcast it."""
+        while not self._stopping:
+            await asyncio.sleep(5)
+            if self.connected and self.power is not False:
+                await self.async_refresh_volume()
+
+    def _read_upnp_volume_mute(self) -> tuple[int | None, bool | None]:
+        """Read master volume and mute from the unauthenticated UPnP endpoint."""
+        volume: int | None = None
+        muted: bool | None = None
+        for action, args in (
+            (
+                "GetVolume",
+                "<InstanceID>0</InstanceID><Channel>Master</Channel>",
+            ),
+            (
+                "GetMute",
+                "<InstanceID>0</InstanceID><Channel>Master</Channel>",
+            ),
+        ):
+            body = (
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+                's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+                "<s:Body>"
+                f'<u:{action} xmlns:u="{_UPNP_RENDERING_CONTROL_SERVICE}">'
+                f"{args}"
+                f"</u:{action}>"
+                "</s:Body></s:Envelope>"
+            )
+            request = urllib.request.Request(
+                _UPNP_RENDERING_CONTROL_URL.format(host=self.host),
+                data=body.encode("utf-8"),
+                headers={
+                    "Content-Type": 'text/xml; charset="utf-8"',
+                    "SOAPAction": (
+                        f'"{_UPNP_RENDERING_CONTROL_SERVICE}#{action}"'
+                    ),
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    text = response.read().decode("utf-8", errors="replace")
+                root = ElementTree.fromstring(text)
+            except (OSError, ValueError, ElementTree.ParseError):
+                continue
+            if action == "GetVolume":
+                value = self._xml_text(root, "CurrentVolume")
+                if value and value.isdigit():
+                    volume = int(value)
+            else:
+                value = self._xml_text(root, "CurrentMute")
+                if value is not None:
+                    muted = value in ("1", "true", "True")
+        return volume, muted
+
+    @staticmethod
+    def _xml_text(root: ElementTree.Element, name: str) -> str | None:
+        """Return the text of the first XML element with this local name."""
+        for element in root.iter():
+            if element.tag.rsplit("}", 1)[-1] == name:
+                return element.text
+        return None
+
+    async def async_refresh_volume(self) -> None:
+        """Refresh volume and mute from UPnP, ignoring transient errors."""
+        try:
+            volume, muted = await asyncio.wait_for(
+                asyncio.to_thread(self._read_upnp_volume_mute), timeout=6
+            )
+        except (OSError, TimeoutError, ValueError):
+            return
+
+        changed = False
+        if volume is not None:
+            if self._volume_target is not None:
+                if volume == self._volume_target:
+                    self._volume_target = None
+                    self._volume_target_until = 0.0
+                elif time.time() < self._volume_target_until:
+                    # The TV applies volume commands asynchronously; keep the
+                    # optimistic value until the command has had time to land.
+                    volume = None
+                else:
+                    self._volume_target = None
+            if volume is not None and self.data.get("volume") != volume:
+                self.data["volume"] = volume
+                changed = True
+        if muted is not None and self.data.get("muted") != muted:
+            self.data["muted"] = muted
+            changed = True
+        if changed:
+            self._notify()
+
+    def _schedule_volume_refresh(self, delay: float = 1.5) -> None:
+        """Refresh UPnP volume after a command has had time to apply."""
+        if (
+            self._volume_refresh_task is not None
+            and not self._volume_refresh_task.done()
+        ):
+            self._volume_refresh_task.cancel()
+        self._volume_refresh_task = asyncio.create_task(
+            self._delayed_volume_refresh(delay),
+            name=f"vidaa-ha volume refresh {self.host}",
+        )
+
+    async def _delayed_volume_refresh(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            if self.connected:
+                await self.async_refresh_volume()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never break the caller for state
+            _LOGGER.debug("Could not refresh VIDAA volume", exc_info=True)
 
     # ------------------------------------------------------------------
     # MQTT helpers
@@ -678,6 +832,8 @@ class VidaaClient:
             self.data["current_app_id"] = None
             self.data["current_app_url"] = None
             self.data["detail"] = "Home"
+        if resolved in ("KEY_VOLUMEUP", "KEY_VOLUMEDOWN", "KEY_MUTE"):
+            self._schedule_volume_refresh()
         self._notify()
 
     async def async_send_keys(
@@ -774,15 +930,26 @@ class VidaaClient:
             self._action_topic("platform_service", "changevolume"), str(volume)
         )
         self.data["volume"] = volume
+        self._volume_target = volume
+        self._volume_target_until = time.time() + 6
         self._notify()
+        self._schedule_volume_refresh()
 
     async def async_volume_up(self) -> None:
         """Step volume up."""
-        await self.async_send_key("KEY_VOLUMEUP")
+        volume = self.data.get("volume")
+        if volume is not None:
+            await self.async_set_volume(int(volume) + 1)
+        else:
+            await self.async_send_key("KEY_VOLUMEUP")
 
     async def async_volume_down(self) -> None:
         """Step volume down."""
-        await self.async_send_key("KEY_VOLUMEDOWN")
+        volume = self.data.get("volume")
+        if volume is not None:
+            await self.async_set_volume(int(volume) - 1)
+        else:
+            await self.async_send_key("KEY_VOLUMEDOWN")
 
     async def async_mute(self, mute: bool) -> None:
         """Set mute idempotently."""
