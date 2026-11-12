@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add VIDAA TV",
+        "description": "Enter the TV's IP address. The MAC address is read automatically from the TV's UPnP descriptor; enter it manually if that fails.",
+        "data": {
+          "host": "Host",
+          "name": "Name (optional)",
+          "mac": "MAC address (optional)",
+          "port": "MQTT port"
+        },
+        "data_description": {
+          "host": "Local IP address of the TV, for example 10.1.1.56.",
+          "name": "Friendly name for the TV. Defaults to the name reported by the TV.",
+          "mac": "Ethernet MAC address. Only needed when automatic discovery fails.",
+          "port": "The local MQTT broker port. The default is 36669."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the TV or it did not answer queries. Check the IP address and that the TV is on the network.",
+      "mac_not_found": "Could not discover the TV's MAC address at {host}. Enter it manually.",
+      "invalid_mac": "Enter a MAC address with 12 hexadecimal characters, for example e4:3b:c9:4c:aa:8d."
+    },
+    "abort": {
+      "already_configured": "This TV is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "VIDAA TV options",
+        "data": {
+          "wol": "Wake-on-LAN",
+          "key_delay": "Delay between remote keys",
+          "include_apps_in_sources": "Include apps in media player sources",
+          "create_key_buttons": "Create buttons for every remote key",
+          "create_picture_entities": "Create picture settings entities",
+          "create_diagnostics": "Create diagnostic sensors"
+        },
+        "data_description": {
+          "wol": "Send magic packets when turning the TV on. Requires the TV to be wired to Ethernet and Wake-on-LAN to be enabled.",
+          "key_delay": "Seconds to wait between keys when a sequence is sent.",
+          "include_apps_in_sources": "Adds all installed apps to the media player source selector.",
+          "create_key_buttons": "Adds one button per supported remote key, grouped in sub-devices.",
+          "create_picture_entities": "Adds the read-only picture menu tree and six writable picture sliders.",
+          "create_diagnostics": "Adds model, firmware, MAC, MQTT and capability sensors."
+        }
+      }
+    }
+  }
+}
