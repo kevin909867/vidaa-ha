@@ -68,9 +68,37 @@ Copy `custom_components/vidaa_ha` into your Home Assistant
   starts and the TV has not broadcast a state yet, the power entity is
   **unknown** rather than guessing. It resolves on the next app/input/power
   change.
-- `turn_on` sends Wake-on-LAN. It only sends `KEY_POWER` if the TV is known to
-  be off, so pressing "on" while the state is unknown cannot accidentally turn
-  a running TV off.
+- `turn_on` sends Wake-on-LAN to every known TV MAC and, if the TV reconnects
+  still reporting `off`, sends `KEY_POWER` once the session is ready. It never
+  toggles power when the state is unknown. See **Waking the TV from deep sleep**
+  below.
+
+## Waking the TV from deep sleep
+
+`turn_on` sends a Wake-on-LAN magic packet to the configured MAC plus the TV's
+`eth0` and `wlan0` MACs, to the global and subnet broadcast addresses and to
+the TV's own IP on UDP ports 9 and 7. If the packet only wakes the network
+stack, the integration waits for the first MQTT session and sends `KEY_POWER`
+when the TV reports that the panel is still off. It does not send a power
+toggle when the state is unknown, so it cannot switch off a TV that woke
+straight to the launcher.
+
+For this to work, the TV must keep at least one network interface alive in
+standby:
+
+- **Fast Power On / Quick Start: ON** — Settings → System → Advanced Settings.
+  This keeps the MQTT broker running in shallow standby, so Home Assistant can
+  send `KEY_POWER` without Wake-on-LAN. This is the most reliable option.
+- **Wake on LAN: ON** — Settings → Network, for wired Ethernet.
+- **Wake on Wireless Network: ON** — Settings → Network, for Wi-Fi.
+- **Auto Standby with No Signal** and **Auto Sleep** — turn both off so the TV
+  does not drop into regulatory deep sleep while idle.
+
+Some VIDAA models (notably 2020–2022 A6/A7-class sets) remove power from the
+Ethernet PHY and Wi-Fi radio in deep sleep. No magic packet can reach a TV in
+that state. Use an IR blaster, HDMI-CEC, or the physical remote for a true cold
+boot; Wake-on-LAN is a hardware capability, not something the integration can
+add.
 
 ## Using the entities
 
@@ -116,7 +144,8 @@ does not create the television remote controls.
 
 The integration handles HomeKit's `homekit_tv_remote_key_pressed` events for
 this TV, so the D-pad, select, back, exit and information buttons in the Apple
-Remote widget send the matching VIDAA keys.
+Remote widget send the matching VIDAA keys. The HomeKit **Back** button sends
+`KEY_RETURNS` (the TV's menu/return key); media rewind stays on `KEY_BACK`.
 
 Apple's HomeKit television remote has **no Home button**, and the Home app does
 not let an integration add one. The remote's **Info** button is therefore
@@ -201,16 +230,21 @@ the underlying client still reads everything.
 - **Cannot connect**: confirm the TV IP, that port `36669` is reachable, and
   that the TV is on the LAN. The broker is TLS-only; a plain MQTT client will
   not work.
+- **Entities unavailable after the TV has been off**: the TV shuts down its
+  broker in deep standby. The integration retries in the background and asks
+  for the power state again when the TV returns, so entities recover without
+  reloading the integration. If they do not, check the log for
+  `Restarting the VIDAA connection` or `VIDAA MQTT connection` warnings.
 - **No apps/sources**: check that the integration is using the MAC-form client
   ID. It does this automatically from the configured MAC. If the MAC was
   entered incorrectly, remove and re-add the integration.
-- **Power unknown**: wait for a state change, or press Home on the remote. The
-  TV does not offer a reliable "am I on?" query; it broadcasts state changes
-  instead.
-- **Wake-on-LAN doesn't work**: the TV must be wired to Ethernet, and Wake-on-LAN
-  must be enabled in the TV's network settings. Some standby modes keep the MQTT
-  broker alive without waking the panel; `KEY_POWER` handles that case when the
-  state is known to be off.
+- **Power unknown**: the integration sends `gettvstate` after connecting and
+  the TV broadcasts state changes, but some firmware only sends broadcasts.
+  Wait for a state change, or press Home on the remote.
+- **Wake-on-LAN doesn't work**: enable **Fast Power On** and **Wake on LAN /
+  Wake on Wireless Network** on the TV, and keep the TV on wired Ethernet if
+  possible. Some models cut power to their network hardware in deep sleep and
+  cannot be woken by any packet; use IR, HDMI-CEC, or the physical remote.
 - **Entity names**: Home Assistant derives entity IDs from the main TV device
   name. If your TV is named "Welter TV", expect `media_player.welter_tv`,
   `binary_sensor.welter_tv_power`, and so on.

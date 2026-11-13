@@ -76,6 +76,9 @@ def _extract_icon(app: dict[str, Any]) -> str | None:
 class VidaaClient:
     """Persistent connection to a VIDAA TV's local MQTT broker."""
 
+    # How often the supervisor checks that the reconnect loop is still alive.
+    WATCHDOG_INTERVAL = 10.0
+
     def __init__(
         self,
         host: str,
@@ -87,6 +90,8 @@ class VidaaClient:
         client_id: str | None = None,
         username: str = "hisenseservice",
         password: str = "multimqttservice",
+        wol_macs: Iterable[str] | None = None,
+        wol_enabled: bool = True,
     ) -> None:
         self.host = host
         self.port = port
@@ -96,6 +101,15 @@ class VidaaClient:
         self.keyfile = keyfile
         self.username = username
         self.password = password
+        self.wol_enabled = wol_enabled
+        self._wol_macs = [self.mac]
+        for candidate in wol_macs or ():
+            try:
+                normalized = normalize_mac(str(candidate))
+            except ValueError:
+                continue
+            if normalized not in self._wol_macs:
+                self._wol_macs.append(normalized)
 
         self.data: dict[str, Any] = {
             "device_info": {},
@@ -136,7 +150,13 @@ class VidaaClient:
         self._listeners: set[Callable[[dict[str, Any]], None]] = set()
         self._pending: dict[str, list[asyncio.Future[Any]]] = {}
         self._task: asyncio.Task[None] | None = None
+        self._watchdog_task: asyncio.Task[None] | None = None
         self._listen_task: asyncio.Task[None] | None = None
+        self._ssl_context: ssl.SSLContext | None = None
+        self._reconnect_requested = False
+        self._wake_pending = False
+        self._wake_pending_until = 0.0
+        self._state_seen = False
         self._volume_poll_task: asyncio.Task[None] | None = None
         self._volume_refresh_task: asyncio.Task[None] | None = None
         self._mqtt: aiomqtt.Client | None = None
@@ -177,6 +197,7 @@ class VidaaClient:
     async def async_start(self, startup_timeout: float = 20.0) -> None:
         """Connect and load the initial state."""
         if self._task is not None and not self._task.done():
+            self._start_watchdog()
             await asyncio.wait_for(self._first_ready.wait(), startup_timeout)
             return
 
@@ -184,9 +205,8 @@ class VidaaClient:
         self._first_ready.clear()
         self._connected_event.clear()
         self._reconnect_event.clear()
-        self._task = asyncio.create_task(
-            self._run(), name=f"vidaa-ha {self.host}"
-        )
+        self._start_connection_task()
+        self._start_watchdog()
         try:
             await asyncio.wait_for(self._first_ready.wait(), startup_timeout)
         except TimeoutError as err:
@@ -205,6 +225,12 @@ class VidaaClient:
     async def async_stop(self) -> None:
         """Stop the connection and cancel background work."""
         self._stopping = True
+        self._wake_pending = False
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._watchdog_task
+            self._watchdog_task = None
         if self._notify_handle is not None:
             self._notify_handle.cancel()
             self._notify_handle = None
@@ -231,16 +257,69 @@ class VidaaClient:
         await self.async_stop()
         await self.async_start()
 
+    def _start_connection_task(self) -> None:
+        """Start the connection loop if it is not already running."""
+        if self._stopping:
+            return
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(
+                self._run(), name=f"vidaa-ha {self.host}"
+            )
+
+    def _start_watchdog(self) -> None:
+        """Start the supervisor that revives a stopped connection loop."""
+        if self._stopping:
+            return
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(
+                self._watchdog(), name=f"vidaa-ha watchdog {self.host}"
+            )
+
+    async def _watchdog(self) -> None:
+        """Restart the connection loop if it ever stops unexpectedly."""
+        while not self._stopping:
+            await asyncio.sleep(self.WATCHDOG_INTERVAL)
+            if self._stopping:
+                return
+            task = self._task
+            if task is not None and not task.done():
+                continue
+            if task is not None and not task.cancelled():
+                error = task.exception()
+                if error is not None:
+                    _LOGGER.error(
+                        "VIDAA connection task stopped unexpectedly: %s",
+                        error,
+                    )
+            if self._stopping:
+                return
+            _LOGGER.warning(
+                "Restarting the VIDAA connection to %s", self.host
+            )
+            self._connected_event.clear()
+            self.data["connected"] = False
+            self._notify()
+            self._start_connection_task()
+
+    def _create_ssl_context(self) -> ssl.SSLContext:
+        """Build the client TLS context outside the event loop."""
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        context.load_cert_chain(self.certfile, self.keyfile)
+        with suppress(Exception):
+            context.set_ciphers("DEFAULT@SECLEVEL=1")
+        return context
+
     async def _run(self) -> None:
         attempt = 0
         while not self._stopping:
             try:
-                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                context.load_cert_chain(self.certfile, self.keyfile)
-                with suppress(Exception):
-                    context.set_ciphers("DEFAULT@SECLEVEL=1")
+                if self._ssl_context is None:
+                    self._ssl_context = await asyncio.to_thread(
+                        self._create_ssl_context
+                    )
+                context = self._ssl_context
 
                 async with aiomqtt.Client(
                     hostname=self.host,
@@ -256,6 +335,8 @@ class VidaaClient:
                 ) as mqtt:
                     self._mqtt = mqtt
                     attempt = 0
+                    self._reconnect_requested = False
+                    self._state_seen = False
                     self.data["connected"] = True
                     self.data["last_connected"] = time.time()
                     self._connected_event.set()
@@ -266,8 +347,10 @@ class VidaaClient:
                     self._listen_task = asyncio.create_task(
                         self._listen(mqtt), name=f"vidaa-ha listen {self.host}"
                     )
+                    await self._request_state()
                     await self._initial_load()
                     self._first_ready.set()
+                    await self._send_pending_wake_key()
                     self._volume_poll_task = asyncio.create_task(
                         self._poll_volume(),
                         name=f"vidaa-ha volume poll {self.host}",
@@ -275,7 +358,16 @@ class VidaaClient:
                     self._notify()
                     await self._listen_task
             except asyncio.CancelledError:
-                raise
+                current = asyncio.current_task()
+                cancelling = bool(
+                    getattr(current, "cancelling", lambda: 0)()
+                )
+                if self._stopping or cancelling or not self._reconnect_requested:
+                    raise
+                _LOGGER.debug(
+                    "Reconnecting to VIDAA TV %s after the session dropped",
+                    self.host,
+                )
             except aiomqtt.MqttError as err:
                 _LOGGER.warning(
                     "VIDAA MQTT connection to %s failed: %s", self.host, err
@@ -298,6 +390,13 @@ class VidaaClient:
 
             if self._stopping:
                 break
+            if self._reconnect_requested:
+                self._reconnect_requested = False
+                self._reconnect_event.clear()
+                _LOGGER.debug(
+                    "Reconnecting to VIDAA TV %s immediately", self.host
+                )
+                continue
             attempt += 1
             delay = min(30, 2 ** min(attempt, 4))
             _LOGGER.debug(
@@ -353,6 +452,44 @@ class VidaaClient:
             self.async_refresh_volume(),
             return_exceptions=True,
         )
+
+    async def _request_state(self) -> None:
+        """Ask the TV for its state so a reconnect cannot leave it stale."""
+        try:
+            await self._publish(
+                self._action_topic("ui_service", "gettvstate"), ""
+            )
+        except VidaaCommandError:
+            _LOGGER.debug("Could not request VIDAA state", exc_info=True)
+
+    async def _send_pending_wake_key(self) -> None:
+        """Finish a Wake-on-LAN request once the TV's session is ready."""
+        if not self._wake_pending:
+            return
+        self._wake_pending = False
+        if time.time() > self._wake_pending_until:
+            return
+        if not self._state_seen:
+            # Give gettvstate or the state broadcast a moment to arrive. Do
+            # not guess: a TV that booted straight to the launcher must not
+            # receive a power toggle.
+            for _ in range(10):
+                if self._state_seen:
+                    break
+                await asyncio.sleep(0.3)
+        if not self._state_seen:
+            _LOGGER.debug(
+                "TV %s reconnected after Wake-on-LAN without a state; "
+                "not sending KEY_POWER",
+                self.host,
+            )
+            return
+        if self.data.get("power") is False:
+            _LOGGER.debug(
+                "Sending KEY_POWER after Wake-on-LAN to %s", self.host
+            )
+            with suppress(VidaaCommandError):
+                await self.async_send_key("KEY_POWER")
 
     async def _cancel_volume_tasks(self) -> None:
         """Cancel volume polling and delayed refresh tasks."""
@@ -489,12 +626,23 @@ class VidaaClient:
     def _action_topic(self, service: str, action: str) -> str:
         return f"/remoteapp/tv/{service}/{self.client_id}/actions/{action}"
 
+    def _request_reconnect(self) -> None:
+        """Tear down the current session so the connection loop starts over."""
+        self._reconnect_requested = True
+        self._reconnect_event.set()
+        listen_task = self._listen_task
+        if listen_task is not None and not listen_task.done():
+            listen_task.cancel()
+
     async def _wait_for_connection(self, timeout: float = 10.0) -> None:
         """Wake the reconnect loop and wait briefly for a usable session."""
-        if self._task is None or self._task.done():
+        if self._stopping:
             raise VidaaCommandError(
                 "The TV connection is stopped; reload the integration."
             )
+        if self._task is None or self._task.done():
+            self._start_connection_task()
+            self._start_watchdog()
         self._reconnect_event.set()
         try:
             await asyncio.wait_for(self._connected_event.wait(), timeout=timeout)
@@ -517,12 +665,13 @@ class VidaaClient:
                 await mqtt.publish(topic, payload, qos=0)
                 return
             except aiomqtt.MqttError as err:
-                self._connected_event.clear()
-                self.data["connected"] = False
-                self._notify()
                 _LOGGER.warning(
                     "VIDAA connection lost while sending a command: %s", err
                 )
+                self._connected_event.clear()
+                self.data["connected"] = False
+                self._notify()
+                self._request_reconnect()
                 if attempt == 0:
                     await self._wait_for_connection()
                 else:
@@ -606,7 +755,7 @@ class VidaaClient:
             self._apply_sound_settings(payload)
         elif leaf == "getvolume":
             self._apply_volume(payload)
-        elif leaf == "state":
+        elif leaf in ("state", "gettvstate"):
             self._apply_state(payload)
 
         self._resolve_query(leaf, payload)
@@ -763,6 +912,7 @@ class VidaaClient:
         if not isinstance(payload, dict) or not payload:
             return
 
+        self._state_seen = True
         self.data["state"] = payload
         self.data["last_state"] = time.time()
         statetype = str(payload.get("statetype") or "").casefold()
@@ -1079,8 +1229,15 @@ class VidaaClient:
     async def async_turn_on(self) -> None:
         """Wake the TV with WOL and, if it is known to be off, a power key."""
         await self._send_wake_on_lan()
-        if self.connected and self.data["power"] is False:
-            await self.async_send_key("KEY_POWER")
+        if self.connected:
+            if self.data["power"] is False:
+                await self.async_send_key("KEY_POWER")
+            return
+        # WoL may only bring up the network stack. Remember the request so
+        # the first session can finish the job once the TV reports its state.
+        self._wake_pending = True
+        self._wake_pending_until = time.time() + 120
+        self._reconnect_event.set()
 
     async def async_turn_off(self) -> None:
         """Put the TV in standby."""
@@ -1091,25 +1248,57 @@ class VidaaClient:
         await self.async_send_keys(["KEY_POWER"])
         self._set_power(False)
 
+    def _wol_target_macs(self) -> list[str]:
+        """Return every MAC that may be listening for a magic packet."""
+        macs = list(self._wol_macs)
+        device = self.data.get("device_info")
+        if isinstance(device, dict):
+            for key in ("eth0", "wlan0"):
+                value = device.get(key)
+                if not value:
+                    continue
+                try:
+                    normalized = normalize_mac(str(value))
+                except ValueError:
+                    continue
+                if normalized not in macs:
+                    macs.append(normalized)
+        return macs
+
     async def _send_wake_on_lan(self) -> None:
-        """Send Wake-on-LAN magic packets to the TV's wired and wireless MACs."""
+        """Send magic packets to every known MAC and broadcast target."""
+        if not self.wol_enabled:
+            return
         loop = asyncio.get_running_loop()
-        with suppress(Exception):
+        try:
             await loop.run_in_executor(None, self._send_wol_sync)
+        except Exception:  # noqa: BLE001 - wake is best effort
+            _LOGGER.debug(
+                "Could not send Wake-on-LAN to %s", self.host, exc_info=True
+            )
 
     def _send_wol_sync(self) -> None:
-        cleaned = re.sub(r"[^0-9a-fA-F]", "", self.mac)
-        payload = b"\xff" * 6 + bytes.fromhex(cleaned) * 16
+        macs = self._wol_target_macs()
         targets = {"255.255.255.255"}
         if self.host.count(".") == 3:
+            targets.add(self.host)
             targets.add(self.host.rsplit(".", 1)[0] + ".255")
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            for target in targets:
-                for port in (9, 7):
-                    for _ in range(2):
-                        with suppress(OSError):
-                            sock.sendto(payload, (target, port))
+            for mac in macs:
+                try:
+                    mac_bytes = bytes.fromhex(mac.replace(":", ""))
+                except ValueError:
+                    continue
+                payload = b"\xff" * 6 + mac_bytes * 16
+                for target in targets:
+                    for port in (9, 7):
+                        for _ in range(3):
+                            with suppress(OSError):
+                                sock.sendto(payload, (target, port))
+        _LOGGER.debug(
+            "Sent Wake-on-LAN to %s for %s", self.host, ", ".join(macs)
+        )
 
     # ------------------------------------------------------------------
     # Change notification

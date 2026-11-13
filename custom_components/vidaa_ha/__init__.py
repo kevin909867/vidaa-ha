@@ -20,7 +20,9 @@ from .const import (
     CONF_KEYFILE,
     CONF_MAC,
     CONF_PORT,
+    CONF_WOL,
     DEFAULT_PORT,
+    DEFAULT_WOL,
     DOMAIN,
     HOMEKIT_REMOTE_KEYS,
     LEGACY_SUBDEVICE_TARGETS,
@@ -72,12 +74,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: VidaaConfigEntry) -> boo
     certfile = entry.data.get(CONF_CERTFILE) or _bundled("vidaa_client.pem")
     keyfile = entry.data.get(CONF_KEYFILE) or _bundled("vidaa_client.key")
 
+    wol_macs = [
+        value
+        for value in (
+            entry.data.get("ethernet_mac"),
+            entry.data.get("wifi_mac"),
+        )
+        if value
+    ]
     client = VidaaClient(
         host,
         mac,
         port=port,
         certfile=certfile,
         keyfile=keyfile,
+        wol_macs=wol_macs,
+        wol_enabled=bool(entry.options.get(CONF_WOL, DEFAULT_WOL)),
     )
     try:
         await client.async_start(startup_timeout=20)

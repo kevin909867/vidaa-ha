@@ -6,7 +6,7 @@ import re
 
 DOMAIN = "vidaa_ha"
 NAME = "VIDAA TV"
-VERSION = "1.0.9"
+VERSION = "1.0.12"
 
 CONF_HOST = "host"
 CONF_NAME = "name"
@@ -235,7 +235,7 @@ KEY_ALIASES: dict[str, str] = {
     "enter": "KEY_OK",
     "select": "KEY_OK",
     "ok_long": "KEY_OK_LONG_PRESS",
-    "back": "KEY_BACK",
+    "back": "KEY_RETURNS",
     "return": "KEY_RETURNS",
     "home": "KEY_HOME",
     "menu": "KEY_MENU",
@@ -303,7 +303,7 @@ HOMEKIT_REMOTE_KEYS: dict[str, str] = {
     "arrow_left": "KEY_LEFT",
     "arrow_right": "KEY_RIGHT",
     "select": "KEY_OK",
-    "back": "KEY_BACK",
+    "back": "KEY_RETURNS",
     "exit": "KEY_EXIT",
     "information": "KEY_HOME",
     "play_pause": "KEY_PLAY",

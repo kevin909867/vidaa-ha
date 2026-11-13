@@ -40,7 +40,7 @@
           "create_diagnostics": "Create diagnostic sensors"
         },
         "data_description": {
-          "wol": "Send magic packets when turning the TV on. Requires the TV to be wired to Ethernet and Wake-on-LAN to be enabled.",
+          "wol": "Send magic packets when turning the TV on. Enable Fast Power On and Wake on LAN/Wireless on the TV; wired Ethernet is required for Wake-on-LAN.",
           "key_delay": "Seconds to wait between keys when a sequence is sent.",
           "include_apps_in_sources": "Adds all installed apps to the media player source selector.",
           "create_key_buttons": "Adds one button per supported remote key, grouped under the Remote device.",
