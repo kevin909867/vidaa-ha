@@ -43,7 +43,7 @@
           "wol": "Send magic packets when turning the TV on. Requires the TV to be wired to Ethernet and Wake-on-LAN to be enabled.",
           "key_delay": "Seconds to wait between keys when a sequence is sent.",
           "include_apps_in_sources": "Adds all installed apps to the media player source selector.",
-          "create_key_buttons": "Adds one button per supported remote key, grouped in sub-devices.",
+          "create_key_buttons": "Adds one button per supported remote key, grouped under the Remote device.",
           "create_picture_entities": "Adds the read-only picture menu tree and six writable picture sliders.",
           "create_diagnostics": "Adds model, firmware, MAC, MQTT and capability sensors."
         }

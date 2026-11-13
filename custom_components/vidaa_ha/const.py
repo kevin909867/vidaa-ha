@@ -6,7 +6,7 @@ import re
 
 DOMAIN = "vidaa_ha"
 NAME = "VIDAA TV"
-VERSION = "1.0.0"
+VERSION = "1.0.4"
 
 CONF_HOST = "host"
 CONF_NAME = "name"
@@ -34,25 +34,33 @@ DEFAULT_CREATE_DIAGNOSTICS = True
 
 MANUFACTURER = "Hisense"
 
-MAIN_DEVICE = "main"
-SYSTEM_DEVICE = "system"
-STATUS_DEVICE = "status"
+APPS_DEVICE = "apps"
 INPUTS_DEVICE = "inputs"
-PICTURE_DEVICE = "picture"
+REMOTE_DEVICE = "remote"
+SETTINGS_DEVICE = "settings"
 
 SUNDEVICE_LABELS = {
-    SYSTEM_DEVICE: "System",
-    STATUS_DEVICE: "Status",
+    APPS_DEVICE: "Apps",
     INPUTS_DEVICE: "Inputs",
-    PICTURE_DEVICE: "Picture",
+    REMOTE_DEVICE: "Remote",
+    SETTINGS_DEVICE: "Settings",
 }
 
-APP_CATEGORY_LABELS = {
-    "streaming": "Apps · Streaming",
-    "live": "Apps · Live TV & Catch-up",
-    "music": "Apps · Music",
-    "games": "Apps · Games",
-    "tools": "Apps · Tools",
+# Sub-devices used before the five-device grouping. Their entities are moved
+# to the new device during setup so upgrading does not leave empty devices.
+LEGACY_SUBDEVICE_TARGETS: dict[str, str | None] = {
+    "status": None,
+    "system": SETTINGS_DEVICE,
+    "picture": SETTINGS_DEVICE,
+    "apps_streaming": APPS_DEVICE,
+    "apps_live": APPS_DEVICE,
+    "apps_music": APPS_DEVICE,
+    "apps_games": APPS_DEVICE,
+    "apps_tools": APPS_DEVICE,
+    "remote_navigation": REMOTE_DEVICE,
+    "remote_volume": REMOTE_DEVICE,
+    "remote_playback": REMOTE_DEVICE,
+    "remote_extras": REMOTE_DEVICE,
 }
 
 APP_CATEGORY_ICONS = {
@@ -284,6 +292,25 @@ KEY_ALIASES: dict[str, str] = {
     "prime": "KEY_PRIME",
     "prime_video": "KEY_PRIME",
 }
+
+# Keys emitted by HomeKit's Television remote. Keeping the mapping here also
+# lets remote.send_command accept the same names directly.
+HOMEKIT_REMOTE_KEYS: dict[str, str] = {
+    "arrow_up": "KEY_UP",
+    "arrow_down": "KEY_DOWN",
+    "arrow_left": "KEY_LEFT",
+    "arrow_right": "KEY_RIGHT",
+    "select": "KEY_OK",
+    "back": "KEY_BACK",
+    "exit": "KEY_EXIT",
+    "information": "KEY_INFO",
+    "play_pause": "KEY_PLAY",
+    "rewind": "KEY_BACK",
+    "fast_forward": "KEY_FORWARDS",
+    "next_track": "KEY_FORWARDS",
+    "previous_track": "KEY_BACK",
+}
+KEY_ALIASES.update(HOMEKIT_REMOTE_KEYS)
 
 
 def resolve_key(command: str) -> str:

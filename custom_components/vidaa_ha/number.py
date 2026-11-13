@@ -12,8 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import (
     CONF_CREATE_PICTURE_ENTITIES,
     DEFAULT_CREATE_PICTURE_ENTITIES,
-    PICTURE_DEVICE,
     PICTURE_NUMBER_CONTROLS,
+    SETTINGS_DEVICE,
     SUNDEVICE_LABELS,
 )
 from .entity import VidaaEntity
@@ -73,8 +73,8 @@ class VidaaPictureNumber(VidaaEntity, NumberEntity):
             entry,
             f"picture_number_{self._menu_id}",
             name=control["name"],
-            device_key=PICTURE_DEVICE,
-            device_name=SUNDEVICE_LABELS[PICTURE_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
         self._attr_icon = control.get("icon")
         self._attr_native_min_value = control.get("min", 0)

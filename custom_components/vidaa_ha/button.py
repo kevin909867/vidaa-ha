@@ -12,15 +12,16 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     APP_CATEGORY_ICONS,
-    APP_CATEGORY_LABELS,
+    APPS_DEVICE,
     CONF_CREATE_DIAGNOSTICS,
     CONF_CREATE_KEY_BUTTONS,
     DEFAULT_CREATE_DIAGNOSTICS,
     DEFAULT_CREATE_KEY_BUTTONS,
     INPUTS_DEVICE,
+    REMOTE_DEVICE,
     REMOTE_GROUPS,
+    SETTINGS_DEVICE,
     SUNDEVICE_LABELS,
-    SYSTEM_DEVICE,
     app_category,
     slugify,
 )
@@ -61,7 +62,7 @@ async def async_setup_entry(
         for group in REMOTE_GROUPS:
             for name, key, icon in group["buttons"]:
                 entities.append(
-                    VidaaKeyButton(coordinator, entry, group, name, key, icon)
+                    VidaaKeyButton(coordinator, entry, name, key, icon)
                 )
 
     for source in client.data.get("sources", []):
@@ -98,8 +99,8 @@ class VidaaAppButton(VidaaEntity, ButtonEntity):
             entry,
             f"app_{self._app_id}",
             name=app.get("display_name") or app.get("name") or "App",
-            device_key=f"apps_{category}",
-            device_name=APP_CATEGORY_LABELS[category],
+            device_key=APPS_DEVICE,
+            device_name=SUNDEVICE_LABELS[APPS_DEVICE],
         )
         self._attr_icon = APP_CATEGORY_ICONS[category]
         if app.get("icon_url"):
@@ -119,7 +120,6 @@ class VidaaKeyButton(VidaaEntity, ButtonEntity):
         self,
         coordinator: Any,
         entry: VidaaConfigEntry,
-        group: dict[str, Any],
         name: str,
         key: str,
         icon: str,
@@ -130,8 +130,8 @@ class VidaaKeyButton(VidaaEntity, ButtonEntity):
             entry,
             f"key_{slugify(name)}_{slugify(key)}",
             name=name,
-            device_key=group["key"],
-            device_name=group["name"],
+            device_key=REMOTE_DEVICE,
+            device_name=SUNDEVICE_LABELS[REMOTE_DEVICE],
         )
         self._attr_icon = icon
 
@@ -187,8 +187,8 @@ class _VidaaSystemButton(VidaaEntity, ButtonEntity):
             entry,
             key,
             name=name,
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
         self._attr_icon = icon
 

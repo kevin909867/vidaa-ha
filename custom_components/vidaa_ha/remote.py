@@ -15,6 +15,8 @@ from .const import (
     CONF_KEY_DELAY,
     DEFAULT_KEY_DELAY,
     REMOTE_COMMANDS,
+    REMOTE_DEVICE,
+    SUNDEVICE_LABELS,
 )
 from .entity import VidaaEntity
 from .vidaa_client import VidaaCommandError
@@ -43,7 +45,14 @@ class VidaaRemote(VidaaEntity, RemoteEntity):
     _attr_icon = "mdi:remote"
 
     def __init__(self, coordinator: Any, entry: VidaaConfigEntry) -> None:
-        super().__init__(coordinator, entry, "remote", name="Remote", device_key=None)
+        super().__init__(
+            coordinator,
+            entry,
+            "remote",
+            name="Remote",
+            device_key=REMOTE_DEVICE,
+            device_name=SUNDEVICE_LABELS[REMOTE_DEVICE],
+        )
 
     @property
     def is_on(self) -> bool | None:

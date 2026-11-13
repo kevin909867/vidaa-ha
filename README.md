@@ -15,26 +15,16 @@ VIDAA sets that accept the same static local credentials.
 
 ## Entity organisation
 
-Everything is grouped under the main TV device. Large sets of entities get
-their own sub-devices, so the device page mirrors the Echo-style grouping:
-apps separately from remote keys, diagnostics separately from live state.
+Everything is grouped into five devices: the main TV, **Apps**, **Inputs**,
+**Remote** and **Settings**. Live status stays on the main TV device.
 
 | Device | What is in it |
 |---|---|
-| **Main TV** | `media_player`, power binary sensor, detailed TV state sensor, full `remote` |
-| **Status** | current app, current input, volume, channel, mute, hotel mode |
+| **Welter TV** (main TV) | `media_player`, power and mute sensors, detailed state, current app/input, volume, channel, hotel mode |
+| **Apps** | one launch button per installed app |
 | **Inputs** | source selector and one button per physical input |
-| **Apps · Streaming** | one launch button per streaming app |
-| **Apps · Live TV & Catch-up** | one launch button per live/catch-up app |
-| **Apps · Music** | one launch button per music app |
-| **Apps · Games** | one launch button per game app |
-| **Apps · Tools** | browser, app store, manual, art |
-| **Remote · Navigation** | power, home, back, menu, exit, info, D-pad, OK |
-| **Remote · Volume & Channels** | volume, mute, channel, guide, number pad |
-| **Remote · Playback & Apps** | play/pause/stop/seek, subtitles, media, live TV, apps |
-| **Remote · Colour & Extras** | colour keys, voice, mouse, zoom, audio-only |
-| **Picture** | six writable sliders plus every readable picture menu value |
-| **System** | model, firmware, MACs, device ID, feature code, capability flags, MQTT diagnostics, refresh/reconnect buttons |
+| **Remote** | the full `remote` entity and every remote key button, including the number pad |
+| **Settings** | picture sliders and sensors, device/MQTT diagnostics, refresh/reconnect buttons |
 
 The app list is read from the TV at setup, so the buttons are the apps actually
 installed on that set, including Foxtel, Kayo, Binge, Stan, ABC iview, 9Now,
@@ -115,7 +105,28 @@ Supported raw keys include `KEY_POWER`, `KEY_HOME`, `KEY_BACK`,
 `KEY_VOICEUP/DOWN`, `KEY_ZOOMIN/OUT`, `KEY_LEFTMOUSEKEYS`, and more.
 
 The `Remote` entity's attributes list every command. The remote-key buttons
-give you the same commands without writing YAML.
+give you the same commands without writing YAML. All of them, including
+`0`–`9`, are on the single **Remote** device.
+
+### Apple Home / HomeKit
+
+Expose `media_player.<tv>` to HomeKit in **accessory mode**. Home Assistant
+requires accessory mode for a media player with device class `tv`; bridge mode
+does not create the television remote controls.
+
+The integration handles HomeKit's `homekit_tv_remote_key_pressed` events for
+this TV, so the D-pad, select, back, exit and information buttons in the Apple
+Remote widget send the matching VIDAA keys. HomeKit volume up/down calls the
+media player's volume step actions, which use the TV's absolute `changevolume`
+command.
+
+Apple's television remote protocol has no numeric keypad, so `0`–`9` cannot
+appear in the HomeKit remote itself. They remain available as **Remote**
+buttons in Home Assistant and as `remote.send_command` commands.
+
+If app switching works but volume does not, use the volume buttons in the
+Apple Remote widget or Control Center while the TV remote is selected. The
+Home app tile does not expose every media-player feature.
 
 ### Media player
 
@@ -148,19 +159,18 @@ data:
 ID/URL, source ID, channel, program, HDR/audio format, hotel mode and more as
 attributes.
 
-The separate status entities live under the **Status** sub-device, so they are
-`binary_sensor.status_muted`, `sensor.status_current_app`,
-`sensor.status_current_source`, `sensor.status_volume` and
-`sensor.status_channel` (Home Assistant may suffix these if the names are
-already taken). `binary_sensor.<tv>_power` is the on/off state on the main
-device.
+The separate status entities now live on the main TV device, alongside
+`binary_sensor.<tv>_power`: `binary_sensor.<tv>_muted`,
+`sensor.<tv>_current_app`, `sensor.<tv>_current_source`,
+`sensor.<tv>_volume` and `sensor.<tv>_channel`. Home Assistant may keep their
+old entity IDs when upgrading, but they are grouped under the main device.
 
 ## Picture settings
 
 The TV exposes its full picture menu over MQTT (118 items on the test set).
 The integration reads all of them and creates:
 
-- read-only sensors for each usable menu item, grouped under **Picture**;
+- read-only sensors for each usable menu item, grouped under **Settings**;
 - writable sliders for Brightness, Contrast, Colour Intensity, Backlight, Tint
   and Sharpness.
 

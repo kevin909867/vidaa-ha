@@ -13,9 +13,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    STATUS_DEVICE,
+    SETTINGS_DEVICE,
     SUNDEVICE_LABELS,
-    SYSTEM_DEVICE,
 )
 from .entity import VidaaEntity
 
@@ -86,8 +85,6 @@ class VidaaMutedBinarySensor(VidaaEntity, BinarySensorEntity):
             entry,
             "muted",
             name="Muted",
-            device_key=STATUS_DEVICE,
-            device_name=SUNDEVICE_LABELS[STATUS_DEVICE],
         )
 
     @property
@@ -112,8 +109,8 @@ class VidaaConnectedBinarySensor(VidaaEntity, BinarySensorEntity):
             entry,
             "mqtt_connected",
             name="MQTT Connected",
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
 
     @property

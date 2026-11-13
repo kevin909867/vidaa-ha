@@ -22,10 +22,8 @@ from .const import (
     DEFAULT_CREATE_DIAGNOSTICS,
     DEFAULT_CREATE_PICTURE_ENTITIES,
     DIAGNOSTIC_SENSORS,
-    PICTURE_DEVICE,
-    STATUS_DEVICE,
+    SETTINGS_DEVICE,
     SUNDEVICE_LABELS,
-    SYSTEM_DEVICE,
 )
 from .entity import VidaaEntity
 from .vidaa_client import normalize_mac
@@ -118,8 +116,6 @@ class VidaaCurrentAppSensor(VidaaEntity, SensorEntity):
             entry,
             "current_app",
             name="Current App",
-            device_key=STATUS_DEVICE,
-            device_name=SUNDEVICE_LABELS[STATUS_DEVICE],
         )
 
     @property
@@ -154,8 +150,6 @@ class VidaaCurrentSourceSensor(VidaaEntity, SensorEntity):
             entry,
             "current_source",
             name="Current Source",
-            device_key=STATUS_DEVICE,
-            device_name=SUNDEVICE_LABELS[STATUS_DEVICE],
         )
 
     @property
@@ -195,8 +189,6 @@ class VidaaVolumeSensor(VidaaEntity, SensorEntity):
             entry,
             "volume",
             name="Volume",
-            device_key=STATUS_DEVICE,
-            device_name=SUNDEVICE_LABELS[STATUS_DEVICE],
         )
 
     @property
@@ -216,8 +208,6 @@ class VidaaChannelSensor(VidaaEntity, SensorEntity):
             entry,
             "channel",
             name="Channel",
-            device_key=STATUS_DEVICE,
-            device_name=SUNDEVICE_LABELS[STATUS_DEVICE],
         )
 
     @property
@@ -253,8 +243,6 @@ class VidaaHotelModeSensor(VidaaEntity, SensorEntity):
             entry,
             "hotel_mode",
             name="Hotel Mode",
-            device_key=STATUS_DEVICE,
-            device_name=SUNDEVICE_LABELS[STATUS_DEVICE],
         )
 
     @property
@@ -280,8 +268,8 @@ class VidaaDiagnosticSensor(VidaaEntity, SensorEntity):
             entry,
             f"diag_{self._key}",
             name=name,
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
         self._attr_icon = icon
 
@@ -325,8 +313,8 @@ class VidaaCountSensor(VidaaEntity, SensorEntity):
             entry,
             key,
             name=name,
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
 
     @property
@@ -347,8 +335,8 @@ class VidaaLastUpdateSensor(VidaaEntity, SensorEntity):
             entry,
             "last_update",
             name="Last Update",
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
 
     @property
@@ -372,8 +360,8 @@ class VidaaClientIdSensor(VidaaEntity, SensorEntity):
             entry,
             "client_id",
             name="MQTT Client ID",
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
 
     @property
@@ -394,8 +382,8 @@ class VidaaBrokerSensor(VidaaEntity, SensorEntity):
             entry,
             "broker",
             name="Broker Endpoint",
-            device_key=SYSTEM_DEVICE,
-            device_name=SUNDEVICE_LABELS[SYSTEM_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
 
     @property
@@ -422,8 +410,8 @@ class VidaaPictureSensor(VidaaEntity, SensorEntity):
             entry,
             f"picture_{self._menu_id}",
             name=name,
-            device_key=PICTURE_DEVICE,
-            device_name=SUNDEVICE_LABELS[PICTURE_DEVICE],
+            device_key=SETTINGS_DEVICE,
+            device_name=SUNDEVICE_LABELS[SETTINGS_DEVICE],
         )
 
     def _item(self) -> dict[str, Any] | None:

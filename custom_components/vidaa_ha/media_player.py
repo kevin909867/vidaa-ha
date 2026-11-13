@@ -194,8 +194,15 @@ class VidaaMediaPlayer(VidaaEntity, MediaPlayerEntity):
         self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float) -> None:
+        # HomeKit's TelevisionSpeaker reports percentage values (0-100), while
+        # Home Assistant's service normally supplies 0.0-1.0. Accept both so
+        # the Apple Home volume control maps to the TV's 0-100 range.
+        level = float(volume)
+        if level > 1:
+            level /= 100
+        level = max(0.0, min(1.0, level))
         try:
-            await self._client.async_set_volume(round(volume * 100))
+            await self._client.async_set_volume(round(level * 100))
         except VidaaCommandError as err:
             raise HomeAssistantError(str(err)) from err
 
