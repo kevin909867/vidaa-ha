@@ -116,9 +116,16 @@ does not create the television remote controls.
 
 The integration handles HomeKit's `homekit_tv_remote_key_pressed` events for
 this TV, so the D-pad, select, back, exit and information buttons in the Apple
-Remote widget send the matching VIDAA keys. HomeKit volume up/down calls the
-media player's volume step actions, which use the TV's absolute `changevolume`
-command.
+Remote widget send the matching VIDAA keys.
+
+Apple's HomeKit television remote has **no Home button**, and the Home app does
+not let an integration add one. The remote's **Info** button is therefore
+mapped to `KEY_HOME`: tap it to return to the VIDAA launcher, then pick an app.
+The TV's own information panel remains available as the `info` command, for
+example `remote.send_command` with `command: info`.
+
+HomeKit volume up/down calls the media player's volume step actions, which use
+the TV's absolute `changevolume` command.
 
 Apple's television remote protocol has no numeric keypad, so `0`–`9` cannot
 appear in the HomeKit remote itself. They remain available as **Remote**

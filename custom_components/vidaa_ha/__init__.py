@@ -26,6 +26,7 @@ from .const import (
     LEGACY_SUBDEVICE_TARGETS,
 )
 from .coordinator import VidaaCoordinator
+from .entity import async_ensure_main_device
 from .vidaa_client import (
     VidaaClient,
     VidaaCommandError,
@@ -53,6 +54,7 @@ class VidaaRuntimeData:
 
     client: VidaaClient
     coordinator: VidaaCoordinator
+    device_id: str
 
 
 VidaaConfigEntry = ConfigEntry[VidaaRuntimeData]
@@ -86,7 +88,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: VidaaConfigEntry) -> boo
 
     coordinator = VidaaCoordinator(hass, entry, client)
     coordinator.async_set_updated_data(client.data)
-    entry.runtime_data = VidaaRuntimeData(client=client, coordinator=coordinator)
+    entry.runtime_data = VidaaRuntimeData(
+        client=client,
+        coordinator=coordinator,
+        device_id=async_ensure_main_device(hass, entry, client),
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_migrate_legacy_devices(hass, entry)
@@ -103,6 +109,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: VidaaConfigEntry) -> bo
     return unloaded
 
 
+def _async_get_device(
+    devices: dr.DeviceRegistry,
+    identifier: tuple[str, str],
+    entry_id: str,
+) -> dr.DeviceEntry | None:
+    """Look up a device, preferring the non-deprecated identifier lookup."""
+    lookup = getattr(devices, "async_get_device_by_identifier", None)
+    if lookup is not None:
+        return lookup(identifier, entry_id)
+    return devices.async_get_device(identifiers={identifier})
+
+
 def _async_migrate_legacy_devices(
     hass: HomeAssistant, entry: VidaaConfigEntry
 ) -> None:
@@ -110,8 +128,8 @@ def _async_migrate_legacy_devices(
     devices = dr.async_get(hass)
     entities = er.async_get(hass)
     for old_key, target_key in LEGACY_SUBDEVICE_TARGETS.items():
-        old_device = devices.async_get_device(
-            identifiers={(DOMAIN, f"{entry.entry_id}_{old_key}")}
+        old_device = _async_get_device(
+            devices, (DOMAIN, f"{entry.entry_id}_{old_key}"), entry.entry_id
         )
         if old_device is None:
             continue
@@ -120,8 +138,8 @@ def _async_migrate_legacy_devices(
             if target_key is None
             else f"{entry.entry_id}_{target_key}"
         )
-        target_device = devices.async_get_device(
-            identifiers={(DOMAIN, target_id)}
+        target_device = _async_get_device(
+            devices, (DOMAIN, target_id), entry.entry_id
         )
         old_entities = er.async_entries_for_device(
             entities, old_device.id, include_disabled_entities=True

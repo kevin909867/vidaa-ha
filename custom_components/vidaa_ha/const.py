@@ -6,7 +6,7 @@ import re
 
 DOMAIN = "vidaa_ha"
 NAME = "VIDAA TV"
-VERSION = "1.0.4"
+VERSION = "1.0.9"
 
 CONF_HOST = "host"
 CONF_NAME = "name"
@@ -294,7 +294,9 @@ KEY_ALIASES: dict[str, str] = {
 }
 
 # Keys emitted by HomeKit's Television remote. Keeping the mapping here also
-# lets remote.send_command accept the same names directly.
+# lets remote.send_command accept the same names directly. Apple's remote has
+# no Home key, so its Information button is repurposed as Home; VIDAA's own
+# information panel stays reachable through the "info" alias.
 HOMEKIT_REMOTE_KEYS: dict[str, str] = {
     "arrow_up": "KEY_UP",
     "arrow_down": "KEY_DOWN",
@@ -303,7 +305,7 @@ HOMEKIT_REMOTE_KEYS: dict[str, str] = {
     "select": "KEY_OK",
     "back": "KEY_BACK",
     "exit": "KEY_EXIT",
-    "information": "KEY_INFO",
+    "information": "KEY_HOME",
     "play_pause": "KEY_PLAY",
     "rewind": "KEY_BACK",
     "fast_forward": "KEY_FORWARDS",

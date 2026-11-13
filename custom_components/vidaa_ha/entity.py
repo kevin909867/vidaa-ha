@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import (
     CONNECTION_NETWORK_MAC,
     DeviceInfo,
@@ -18,6 +20,13 @@ from .const import (
 )
 from .coordinator import VidaaCoordinator
 from .vidaa_client import VidaaClient, normalize_mac
+
+# Home Assistant 2026.8 added `via_device_id`, which replaces the deprecated
+# `via_device` identifier tuple (removal: 2027.8). Probe the type so the same
+# code keeps working on older releases.
+_VIA_DEVICE_ID_SUPPORTED = "via_device_id" in getattr(
+    DeviceInfo, "__annotations__", {}
+)
 
 
 def _main_device_info(entry: ConfigEntry, client: VidaaClient) -> DeviceInfo:
@@ -53,16 +62,32 @@ def _sub_device_info(
     client: VidaaClient,
     key: str,
     name: str,
+    parent_device_id: str | None = None,
 ) -> DeviceInfo:
     device = client.data.get("device_info", {})
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers={(DOMAIN, f"{entry.entry_id}_{key}")},
         name=name,
         manufacturer=MANUFACTURER,
         model=device.get("model_name") or "VIDAA TV",
         sw_version=device.get("tv_version"),
-        via_device=(DOMAIN, entry.entry_id),
     )
+    if _VIA_DEVICE_ID_SUPPORTED and parent_device_id:
+        info["via_device_id"] = parent_device_id
+    else:
+        info["via_device"] = (DOMAIN, entry.entry_id)
+    return info
+
+
+def async_ensure_main_device(
+    hass: HomeAssistant, entry: ConfigEntry, client: VidaaClient
+) -> str:
+    """Create or refresh the main TV device and return its registry id."""
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        **_main_device_info(entry, client),
+    )
+    return device.id
 
 
 class VidaaEntity(CoordinatorEntity[VidaaCoordinator]):
@@ -95,6 +120,7 @@ class VidaaEntity(CoordinatorEntity[VidaaCoordinator]):
                 self._client,
                 device_key,
                 device_name or device_key.replace("_", " ").title(),
+                getattr(entry.runtime_data, "device_id", None),
             )
 
     @property

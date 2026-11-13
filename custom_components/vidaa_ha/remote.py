@@ -40,8 +40,13 @@ class VidaaRemote(VidaaEntity, RemoteEntity):
     """A remote that can send every key the TV accepts."""
 
     _attr_name = "Remote"
-    # Newer HA releases removed the explicit SEND_COMMAND flag; older ones need it.
-    _attr_supported_features = getattr(RemoteEntityFeature, "SEND_COMMAND", 0)
+    # Home Assistant 2026.11 removed the explicit SEND_COMMAND flag; older
+    # releases still need it. The fallback must be an (empty) RemoteEntityFeature:
+    # HA's state_attributes tests `RemoteEntityFeature.ACTIVITY in
+    # supported_features`, which raises TypeError on a plain int.
+    _attr_supported_features = getattr(
+        RemoteEntityFeature, "SEND_COMMAND", RemoteEntityFeature(0)
+    )
     _attr_icon = "mdi:remote"
 
     def __init__(self, coordinator: Any, entry: VidaaConfigEntry) -> None:
